@@ -181,7 +181,13 @@ public class VideoJSIMA extends Sprite {
 	private function contentPauseRequestedHandler(event:AdEvent):void {
 		console('content pause request');
 		//Todo if i have an ad, and it is linear, and it is preroll, play it
-		ExternalInterface.call('window.videojs.players[playerId].ads.startLinearAdMode');
+
+		if(_contentPlayerId)
+		{
+			console('sending back startlinearadmode');
+			ExternalInterface.call('window.videojs.players['+_contentPlayerId+'].ads.startLinearAdMode');
+		}
+
 	}
 
 	/**
@@ -209,7 +215,11 @@ public class VideoJSIMA extends Sprite {
 	 */
 	private function contentResumeRequestedHandler(event:AdEvent):void {
 		console('content resume request');
-		ExternalInterface.call('window.videojs.players[playerId].ads.endLinearAdMode');
+		if(_contentPlayerId)
+		{
+			console('sending back endlinearadmode');
+			ExternalInterface.call('window.videojs.players['+_contentPlayerId+'].ads.endLinearAdMode');
+		}
 	}
 
 	/**
@@ -242,7 +252,7 @@ public class VideoJSIMA extends Sprite {
 	{
 		if(_contentPlayerId)
 		{
-			var commandString:String = 'window.player['+_contentPlayerId+'].trigger';
+			var commandString:String = 'window.videojs.players['+_contentPlayerId+'].trigger';
 			try{
 				ExternalInterface.call(commandString, event);
 			} catch(err:Error) {
