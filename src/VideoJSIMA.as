@@ -1,8 +1,13 @@
 package {
 
 import flash.display.Sprite;
+import flash.display.StageAlign;
+import flash.display.StageScaleMode;
+import flash.events.Event;
+import flash.events.MouseEvent;
+import flash.events.TimerEvent;
+import flash.external.ExternalInterface;
 import flash.system.Security;
-import flash.text.TextField;
 import com.google.ads.ima.api.AdErrorEvent;
 import com.google.ads.ima.api.AdEvent;
 import com.google.ads.ima.api.AdsLoader;
@@ -14,49 +19,48 @@ import com.google.ads.ima.api.ViewModes;
 
 import flash.ui.ContextMenu;
 import flash.ui.ContextMenuItem;
+import flash.utils.Timer;
 
 [SWF(backgroundColor="#000000", frameRate="60", width="640", height="360")]
 public class VideoJSIMA extends Sprite {
 
-	private static const LINEAR_AD_TAG:String =
-			"http://pubads.g.doubleclick.net/gampad/ads?sz=400x300&" +
-					"iu=%2F6062%2Fiab_vast_samples&ciu_szs=300x250%2C728x90&impl=s&" +
-					"gdfp_req=1&env=vp&output=xml_vast2&unviewed_position_start=1&" +
-					"url=[referrer_url]&correlator=[timestamp]&" +
-					"cust_params=iab_vast_samples%3Dlinear";
-
-	private static const NONLINEAR_AD_TAG:String =
-			"http://pubads.g.doubleclick.net/gampad/ads?sz=400x300&" +
-					"iu=%2F6062%2Fiab_vast_samples&ciu_szs=300x250%2C728x90&" +
-					"impl=s&gdfp_req=1&env=vp&output=xml_vast2&unviewed_position_start=1&" +
-					"url=[referrer_url]&correlator=[timestamp]&" +
-					"cust_params=iab_vast_samples%3Dimageoverlay";
-
 	private var adsLoader:AdsLoader;
 	private var adsManager:AdsManager;
-	private var contentPlayheadTime:Number;
+	private var contentPlayheadTime:Number = 0;
+	private var _stageSizeTimer:Timer;
 
 	public function VideoJSIMA() {
+		_stageSizeTimer = new Timer(250);
+		_stageSizeTimer.addEventListener(TimerEvent.TIMER, onStageSizeTimerTick);
+		addEventListener(Event.ADDED_TO_STAGE, onAddedToStage);
+	}
+
+	private function init():void {
 		// Allow JS calls from other domains
 		Security.allowDomain("*");
 		Security.allowInsecureDomain("*");
 
+		ExternalInterface.addCallback('onContentUpdate', onContentUpdate);
+		ExternalInterface.addCallback('onReadyForPreroll', onContentUpdate);
+		ExternalInterface.addCallback('onContentComplete', onContentUpdate);
+		ExternalInterface.addCallback('requestAds', requestAds);
+
 		// add content-menu version info
-		var _ctxVersion:ContextMenuItem = new ContextMenuItem("VideoJS Flash IMA Component v0.0.11", false, false);
+		var _ctxVersion:ContextMenuItem = new ContextMenuItem("VideoJS Flash IMA Component v0.0.1", false, false);
 		var _ctxAbout:ContextMenuItem = new ContextMenuItem("Copyright © 2013 Brightcove, Inc.", false, false);
 		var _ctxMenu:ContextMenu = new ContextMenu();
 		_ctxMenu.hideBuiltInItems();
 		_ctxMenu.customItems.push(_ctxVersion, _ctxAbout);
 		this.contextMenu = _ctxMenu;
-		trace('hello');
 
-		requestAds(LINEAR_AD_TAG);
-    }
+		initAdsLoader();
+	}
 
 	/**
 	 * Instantiate the AdsLoader and load the SDK
 	 */
 	private function initAdsLoader():void {
+		console('init ads loader');
 		if (adsLoader == null) {
 			// On the first request, create the AdsLoader.
 			adsLoader = new AdsLoader();
@@ -64,8 +68,7 @@ public class VideoJSIMA extends Sprite {
 			// loading stage will take place when ads are requested. Including this
 			// call will decrease latency in starting ad playback.
 			adsLoader.loadSdk();
-			adsLoader.addEventListener(AdsManagerLoadedEvent.ADS_MANAGER_LOADED,
-					adsManagerLoadedHandler);
+			adsLoader.addEventListener(AdsManagerLoadedEvent.ADS_MANAGER_LOADED, adsManagerLoadedHandler);
 			adsLoader.addEventListener(AdErrorEvent.AD_ERROR, adsLoadErrorHandler);
 		}
 	}
@@ -75,16 +78,17 @@ public class VideoJSIMA extends Sprite {
 	 *
 	 * @param adTag A URL that will return a valid VAST response.
 	 */
-	private function requestAds(adTag:String):void {
-		trace('request Ads');
-		initAdsLoader();
+	public function requestAds(adTag:String):void {
+		console('request ads ' + adTag);
+		if(!adsManager)	initAdsLoader();
+
 		// The AdsRequest encapsulates all the properties required to request ads.
 		var adsRequest:AdsRequest = new AdsRequest();
 		adsRequest.adTagUrl = adTag;
-		adsRequest.linearAdSlotWidth = 640;
-		adsRequest.linearAdSlotHeight = 360;
-		adsRequest.nonLinearAdSlotWidth = 640;
-		adsRequest.nonLinearAdSlotHeight = 360;
+		adsRequest.linearAdSlotWidth = stage.stageWidth;
+		adsRequest.linearAdSlotHeight = stage.stageHeight;
+		adsRequest.nonLinearAdSlotWidth = stage.stageWidth;
+		adsRequest.nonLinearAdSlotHeight = stage.stageHeight;
 
 		// Instruct the AdsLoader to request ads using the AdsRequest object.
 		adsLoader.requestAds(adsRequest);
@@ -94,7 +98,8 @@ public class VideoJSIMA extends Sprite {
 	 * Invoked when the AdsLoader successfully fetched ads.
 	 */
 	private function adsManagerLoadedHandler(event:AdsManagerLoadedEvent):void {
-		trace('loaded');
+		console('loaded ads manager');
+
 		// Publishers can modify the default preferences through this object.
 		var adsRenderingSettings:AdsRenderingSettings =
 				new AdsRenderingSettings();
@@ -112,21 +117,17 @@ public class VideoJSIMA extends Sprite {
 			// Add required ads manager listeners.
 			// ALL_ADS_COMPLETED event will fire once all the ads have played. There
 			// might be more than one ad played in the case of ad pods and VMAP.
-			adsManager.addEventListener(AdEvent.ALL_ADS_COMPLETED,
-					allAdsCompletedHandler);
+			adsManager.addEventListener(AdEvent.ALL_ADS_COMPLETED, allAdsCompletedHandler);
 			// If ad is linear, it will fire content pause request event.
-			adsManager.addEventListener(AdEvent.CONTENT_PAUSE_REQUESTED,
-					contentPauseRequestedHandler);
+			adsManager.addEventListener(AdEvent.CONTENT_PAUSE_REQUESTED, contentPauseRequestedHandler);
 			// When ad finishes or if ad is non-linear, content resume event will be
 			// fired. For example, if VMAP response only has post-roll, content
 			// resume will be fired for pre-roll ad (which is not present) to signal
 			// that content should be started or resumed.
-			adsManager.addEventListener(AdEvent.CONTENT_RESUME_REQUESTED,
-					contentResumeRequestedHandler);
+			adsManager.addEventListener(AdEvent.CONTENT_RESUME_REQUESTED, contentResumeRequestedHandler);
 			// We want to know when an ad starts.
 			adsManager.addEventListener(AdEvent.STARTED, startedHandler);
-			adsManager.addEventListener(AdErrorEvent.AD_ERROR,
-					adsManagerPlayErrorHandler);
+			adsManager.addEventListener(AdErrorEvent.AD_ERROR, adsManagerPlayErrorHandler);
 
 			// If your video player supports a specific version of VPAID ads, pass
 			// in the version. If your video player does not support VPAID ads yet,
@@ -134,7 +135,7 @@ public class VideoJSIMA extends Sprite {
 			adsManager.handshakeVersion("1.0");
 			// Init should be called before playing the content in order for VMAP
 			// ads to function correctly.
-			adsManager.init(640,360,ViewModes.NORMAL);
+			adsManager.init(stage.stageWidth,stage.stageHeight,ViewModes.NORMAL);
 
 			// Add the adsContainer to the display list. Below is an example of how
 			// to do it in Flex.
@@ -142,8 +143,6 @@ public class VideoJSIMA extends Sprite {
 
 			// Start the ad playback.
 			adsManager.start();
-
-			requestAds(LINEAR_AD_TAG);
 		}
 	}
 
@@ -152,7 +151,6 @@ public class VideoJSIMA extends Sprite {
 	 * is necessary to prevent memory leaks.
 	 */
 	private function destroyAdsManager():void {
-		//enableContentControls();
 		if (adsManager) {
 			if (adsManager.adsContainer.parent &&
 					adsManager.adsContainer.parent.contains(adsManager.adsContainer)) {
@@ -169,6 +167,7 @@ public class VideoJSIMA extends Sprite {
 	private function allAdsCompletedHandler(event:AdEvent):void {
 		// Ads manager can be destroyed after all of its ads have played.
 		destroyAdsManager();
+		console('All ads have completed');
 	}
 
 	/**
@@ -176,15 +175,7 @@ public class VideoJSIMA extends Sprite {
 	 * the content.
 	 */
 	private function contentPauseRequestedHandler(event:AdEvent):void {
-		// The ad will cover a large portion of the content, therefore content
-		// must be paused.
-		//if (videoPlayer.playing) {
-		//	videoPlayer.pause();
-		//}
-		// Rewire controls to affect ads manager instead of the content video.
-		//enableLinearAdControls();
-		// Ads usually do not allow scrubbing.
-		//canScrub = false;
+		console('content pause request');
 	}
 
 	/**
@@ -193,10 +184,8 @@ public class VideoJSIMA extends Sprite {
 	 * playing ads.
 	 */
 	private function adsManagerPlayErrorHandler(event:AdErrorEvent):void {
-		trace("warning", "Ad playback error: " + event.error.errorMessage);
+		console("Ad playback error: " + event.error.errorMessage);
 		destroyAdsManager();
-		//enableContentControls();
-		//videoPlayer.play();
 	}
 
 	/**
@@ -205,8 +194,8 @@ public class VideoJSIMA extends Sprite {
 	 * if there's an error loading ads.
 	 */
 	private function adsLoadErrorHandler(event:AdErrorEvent):void {
-		trace("warning", "Ads load error: " + event.error.errorMessage);
-		//videoPlayer.play();
+		console("Ads load error: " + event.error.errorMessage);
+
 	}
 
 	/**
@@ -214,19 +203,73 @@ public class VideoJSIMA extends Sprite {
 	 * the content.
 	 */
 	private function contentResumeRequestedHandler(event:AdEvent):void {
-		// Rewire controls to affect content instead of the ads manager.
-		//enableContentControls();
-		//videoPlayer.play();
+		console('content resume request');
 	}
 
 	/**
 	 * The AdsManager raises this event when the ad has started.
 	 */
 	private function startedHandler(event:AdEvent):void {
-		// If the ad exists and is a non-linear, start the content with the ad.
-		if (event.ad != null && !event.ad.linear) {
-			//videoPlayer.play();
+		console('An ad has started');
+	}
+
+	private function onContentUpdate(value:*):void {
+		console('External call for onContentUpdate received');
+	}
+
+	private function onPrerollReady(value:*):void {
+		console('External call for onPrerollReady received');
+	}
+
+	private function onContentComplete(value:*):void {
+		console('External call for onContentComplete received');
+	}
+
+	/**
+	 * Notify the player of an ad integration event.
+	 */
+	private function notifyPlayer(event:String):void
+	{
+		var playerID:String = ExternalInterface.objectID;
+		var commandString:String = 'window.player['+playerID+'].trigger';
+		try{
+			ExternalInterface.call(commandString, event);
+		} catch(err:Error) {
+			console('There was an error notifying player of ' +  event);
 		}
+
+	}
+
+	private function console(value:*):void {
+		try{
+			ExternalInterface.call('window.console.log', value);
+		} catch(err:Error) {
+
+		}
+	}
+
+	private function onStageSizeTimerTick(e:TimerEvent):void{
+		if(stage.stageWidth > 0 && stage.stageHeight > 0){
+			_stageSizeTimer.stop();
+			_stageSizeTimer.removeEventListener(TimerEvent.TIMER, onStageSizeTimerTick);
+			init();
+		}
+	}
+
+	private function onStageResize(e:Event):void{
+		console('stage resize');
+	}
+
+	private function onAddedToStage(e:Event):void{
+		stage.addEventListener(MouseEvent.CLICK, onStageClick);
+		stage.addEventListener(Event.RESIZE, onStageResize);
+		stage.scaleMode = StageScaleMode.NO_SCALE;
+		stage.align = StageAlign.TOP_LEFT;
+		_stageSizeTimer.start();
+	}
+
+	private function onStageClick(e:MouseEvent):void{
+		console('IMA SWF just stole your click');
 	}
 }
 }
