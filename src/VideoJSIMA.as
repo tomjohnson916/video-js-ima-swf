@@ -28,6 +28,7 @@ public class VideoJSIMA extends Sprite {
 	private var adsManager:AdsManager;
 	private var contentPlayheadTime:Number = 0;
 	private var _stageSizeTimer:Timer;
+	private var _contentPlayerId:String;
 
 	public function VideoJSIMA() {
 		_stageSizeTimer = new Timer(250);
@@ -40,18 +41,22 @@ public class VideoJSIMA extends Sprite {
 		Security.allowDomain("*");
 		Security.allowInsecureDomain("*");
 
-		ExternalInterface.addCallback('onContentUpdate', onContentUpdate);
-		ExternalInterface.addCallback('onReadyForPreroll', onContentUpdate);
-		ExternalInterface.addCallback('onContentComplete', onContentUpdate);
-		ExternalInterface.addCallback('requestAds', requestAds);
+		ExternalInterface.addCallback('trigger', onTrigger);
 
 		// add content-menu version info
-		var _ctxVersion:ContextMenuItem = new ContextMenuItem("VideoJS Flash IMA Component v0.0.1", false, false);
+		var _ctxVersion:ContextMenuItem = new ContextMenuItem("VideoJS Flash IMA Component v0.0.2", false, false);
 		var _ctxAbout:ContextMenuItem = new ContextMenuItem("Copyright © 2013 Brightcove, Inc.", false, false);
 		var _ctxMenu:ContextMenu = new ContextMenu();
 		_ctxMenu.hideBuiltInItems();
 		_ctxMenu.customItems.push(_ctxVersion, _ctxAbout);
 		this.contextMenu = _ctxMenu;
+
+		if(loaderInfo.parameters.playerId)
+		{
+			_contentPlayerId = loaderInfo.parameters.playerId;
+
+			console('registered a content player at ' + _contentPlayerId );
+		}
 
 		initAdsLoader();
 	}
@@ -141,8 +146,7 @@ public class VideoJSIMA extends Sprite {
 			// to do it in Flex.
 			addChild(adsManager.adsContainer);
 
-			// Start the ad playback.
-			adsManager.start();
+			contentPlayerTrigger('adsready');
 		}
 	}
 
@@ -176,6 +180,8 @@ public class VideoJSIMA extends Sprite {
 	 */
 	private function contentPauseRequestedHandler(event:AdEvent):void {
 		console('content pause request');
+		//Todo if i have an ad, and it is linear, and it is preroll, play it
+		ExternalInterface.call('window.videojs.players[playerId].ads.startLinearAdMode');
 	}
 
 	/**
@@ -195,7 +201,6 @@ public class VideoJSIMA extends Sprite {
 	 */
 	private function adsLoadErrorHandler(event:AdErrorEvent):void {
 		console("Ads load error: " + event.error.errorMessage);
-
 	}
 
 	/**
@@ -204,6 +209,7 @@ public class VideoJSIMA extends Sprite {
 	 */
 	private function contentResumeRequestedHandler(event:AdEvent):void {
 		console('content resume request');
+		ExternalInterface.call('window.videojs.players[playerId].ads.endLinearAdMode');
 	}
 
 	/**
@@ -215,10 +221,14 @@ public class VideoJSIMA extends Sprite {
 
 	private function onContentUpdate(value:*):void {
 		console('External call for onContentUpdate received');
+		requestAds(value.serverUrl);
 	}
 
 	private function onPrerollReady(value:*):void {
 		console('External call for onPrerollReady received');
+
+		// Start the ad playback.
+		adsManager.start();
 	}
 
 	private function onContentComplete(value:*):void {
@@ -228,21 +238,24 @@ public class VideoJSIMA extends Sprite {
 	/**
 	 * Notify the player of an ad integration event.
 	 */
-	private function notifyPlayer(event:String):void
+	private function contentPlayerTrigger(event:String):void
 	{
-		var playerID:String = ExternalInterface.objectID;
-		var commandString:String = 'window.player['+playerID+'].trigger';
-		try{
-			ExternalInterface.call(commandString, event);
-		} catch(err:Error) {
-			console('There was an error notifying player of ' +  event);
+		if(_contentPlayerId)
+		{
+			var commandString:String = 'window.player['+_contentPlayerId+'].trigger';
+			try{
+				ExternalInterface.call(commandString, event);
+			} catch(err:Error) {
+				console('There was an error notifying player of ' +  event);
+			}
+		} else {
+			console('trigger called, but no player registered');
 		}
-
 	}
 
 	private function console(value:*):void {
 		try{
-			ExternalInterface.call('window.console.log', value);
+			ExternalInterface.call('window.console.log', "["+ExternalInterface.objectID+"]", value);
 		} catch(err:Error) {
 
 		}
@@ -270,6 +283,32 @@ public class VideoJSIMA extends Sprite {
 
 	private function onStageClick(e:MouseEvent):void{
 		console('IMA SWF just stole your click');
+	}
+
+	private function onTrigger(e:*):void{
+		// then what?
+		if(e.type)
+		{
+			switch(e.type)
+			{
+				case 'contentupdate':
+					onContentUpdate(e.options);
+					break;
+
+				case 'readyforpreroll':
+					onPrerollReady(e.options);
+					break;
+
+				case 'ended':
+					onContentComplete(e.options);
+					break;
+
+				default:
+					break;
+			}
+		}
+
+
 	}
 }
 }
